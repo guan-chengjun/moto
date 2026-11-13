@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>S1000RR 风格 · 3D 仿赛摩托车数字展厅</title>
+
+<!-- =============================================================
+     单文件 3D 仿赛摩托车展厅
+     - Three.js 通过 CDN importmap 引入，无需构建、无需后端，双击即可运行
+     - 在线 GLB 模型（CC BY 4.0 开源协议，polyfork.dev 直链，已内置多源回退）
+     - 功能：360° 环绕 / 滚轮缩放 / 启停发动机(WebAudio 合成) / 剖切透视 / 转速表
+     ============================================================= -->
+<style>
+  /* ---------- 全局 ---------- */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --panel-bg: rgba(14, 18, 28, 0.72);
+    --panel-border: rgba(120, 170, 255, 0.25);
+    --accent: #38bdf8;
+    --accent-2: #f43f5e;
+    --text: #e6edf7;
+    --text-dim: #93a4bd;
+  }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #07090f;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; color: var(--text); }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* ---------- 顶部标题 ---------- */
+  #title {
+    position: fixed; top: 18px; left: 22px; z-index: 10; pointer-events: none;
+    text-shadow: 0 2px 18px rgba(0,0,0,.8);
+  }
+  #title h1 { font-size: 20px; font-weight: 700; letter-spacing: 2px; }
+  #title h1 span { color: var(--accent); }
+  #title p { font-size: 12px; color: var(--text-dim); margin-top: 4px; letter-spacing: 1px; }
+
+  /* ---------- 悬浮控制面板 ---------- */
+  #panel {
+    position: fixed; top: 84px; right: 18px; z-index: 20; width: 272px;
+    background: var(--panel-bg); border: 1px solid var(--panel-border);
+    border-radius: 14px; padding: 14px 14px 16px; backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: 0 12px 40px rgba(0,0,0,.45);
+    user-select: none;
+  }
+  #panel .drag-handle {
+    cursor: move; font-size: 12px; color: var(--text-dim); letter-spacing: 2px;
+    padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.08);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .btn-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  button.ctl {
+    flex: 1; padding: 10px 6px; border-radius: 9px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06);
+    color: var(--text); font-size: 13px; font-weight: 600; letter-spacing: 1px;
+    transition: all .18s ease;
+  }
+  button.ctl:hover { background: rgba(255,255,255,.14); transform: translateY(-1px); }
+  button.ctl:active { transform: translateY(0); }
+  button.ctl.primary { background: linear-gradient(135deg, #0ea5e9, #2563eb); border-color: transparent; }
+  button.ctl.danger { background: linear-gradient(135deg, #e11d48, #b91c1c); border-color: transparent; }
+  button.ctl.active { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.ctl:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+  .switch-row { display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 2px; font-size: 13px; color: var(--text-dim); }
+  /* iOS 风格开关 */
+  .switch { position: relative; width: 42px; height: 23px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: rgba(255,255,255,.16);
+    border-radius: 23px; transition: .25s; cursor: pointer; }
+  .slider::before { content: ""; position: absolute; width: 17px; height: 17px; left: 3px; top: 3px;
+    background: #fff; border-radius: 50%; transition: .25s; }
+  .switch input:checked + .slider { background: var(--accent); }
+  .switch input:checked + .slider::before { transform: translateX(19px); }
+
+  .slider-block { margin-top: 10px; font-size: 12px; color: var(--text-dim); }
+  .slider-block input[type=range] { width: 100%; accent-color: var(--accent); margin-top: 6px; }
+  #clipWrap { display: none; }
+  #clipWrap.show { display: block; }
+
+  /* ---------- 转速表 ---------- */
+  #tachBox { margin-top: 12px; background: rgba(0,0,0,.35); border-radius: 10px;
+    padding: 8px; border: 1px solid rgba(255,255,255,.07); }
+  #tach { width: 100%; display: block; }
+  #rpmText { text-align: center; font-size: 12px; color: var(--text-dim); margin-top: 2px;
+    font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+
+  /* ---------- 加载遮罩 / 失败提示 ---------- */
+  #loader {
+    position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px;
+    background: radial-gradient(circle at 50% 40%, #101827 0%, #07090f 70%);
+    transition: opacity .5s ease;
+  }
+  #loader.hide { opacity: 0; pointer-events: none; }
+  .ring { width: 58px; height: 58px; border: 4px solid rgba(56,189,248,.18);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loadLabel { font-size: 14px; letter-spacing: 1px; color: var(--text-dim); }
+  #progressTrack { width: 280px; height: 6px; background: rgba(255,255,255,.1);
+    border-radius: 6px; overflow: hidden; }
+  #progressBar { height: 100%; width: 0%; border-radius: 6px;
+    background: linear-gradient(90deg, #0ea5e9, #38bdf8); transition: width .25s ease; }
+  #loadPct { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  #retryBtn { display: none; padding: 10px 26px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--accent); background: rgba(56,189,248,.12);
+    color: var(--accent); font-size: 14px; font-weight: 600; }
+  #retryBtn:hover { background: rgba(56,189,248,.22); }
+
+  /* ---------- 底部操作提示 ---------- */
+  #hint {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 10;
+    font-size: 12px; color: var(--text-dim); background: rgba(10,14,22,.55);
+    padding: 8px 18px; border-radius: 999px; border: 1px solid rgba(255,255,255,.08);
+    backdrop-filter: blur(8px); white-space: nowrap; letter-spacing: .5px;
+  }
+  #hint kbd { background: rgba(255,255,255,.14); border-radius: 4px; padding: 1px 6px;
+    font-family: inherit; font-size: 11px; }
+
+  /* ---------- 小屏适配 ---------- */
+  @media (max-width: 640px) {
+    #panel { width: calc(100vw - 24px); right: 12px; top: auto; bottom: 52px; }
+    #title h1 { font-size: 16px; }
+    #hint { font-size: 11px; padding: 6px 12px; }
+  }
+</style>
+
+<!-- importmap：统一指定 Three.js 模块 CDN 地址 -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+
+<body>
+<div id="app"></div>
+
+<div id="title">
+  <h1>S1000RR 风格 · <span>仿赛摩托车数字展厅</span></h1>
+  <p>WEB 3D SHOWROOM &nbsp;|&nbsp; 模型协议 CC BY 4.0 · polyfork.dev</p>
+</div>
+
+<!-- 悬浮控制面板 -->
+<div id="panel">
+  <div class="drag-handle" id="dragHandle">
+    <span>控制台 CONTROL</span><span>⋮⋮ 拖动</span>
+  </div>
+
+  <div class="btn-row">
+    <button class="ctl primary" id="startBtn">▶ 启动</button>
+    <button class="ctl danger" id="stopBtn" disabled>■ 熄火</button>
+  </div>
+
+  <div class="switch-row">
+    <span>剖切透视（外壳透明）</span>
+    <label class="switch">
+      <input type="checkbox" id="xrayToggle" />
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="switch-row">
+    <span>展台自动旋转</span>
+    <label class="switch">
+      <input type="checkbox" id="rotateToggle" checked />
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="slider-block" id="clipWrap">
+    <span>剖切深度（纵向切除范围）</span>
+    <input type="range" id="clipSlider" min="0" max="100" value="55" />
+  </div>
+  <div class="slider-block">
+    <span>油门（仅发动机运转时有效）· 按住 <kbd>W</kbd> 或此处拖动</span>
+    <input type="range" id="throttleSlider" min="0" max="100" value="0" />
+  </div>
+
+  <!-- 转速表 -->
+  <div id="tachBox">
+    <canvas id="tach" width="480" height="240"></canvas>
+    <div id="rpmText">熄火 OFF · 0 RPM</div>
+  </div>
+</div>
+
+<!-- 加载进度 / 失败提示 -->
+<div id="loader">
+  <div class="ring"></div>
+  <div id="loadLabel">正在加载 3D 摩托车模型…</div>
+  <div id="progressTrack"><div id="progressBar"></div></div>
+  <div id="loadPct">0%</div>
+  <button id="retryBtn">重新加载</button>
+</div>
+
+<div id="hint">
+  🖱 左键拖拽 360° 环绕 · 滚轮缩放 · 右键平移 &nbsp;|&nbsp;
+  <kbd>W</kbd> 油门 &nbsp;<kbd>Space</kbd> 启动/熄火 &nbsp;<kbd>X</kbd> 剖切
+</div>
+
+<script type="module">
+/* =========================================================================
+ * 0. 模块导入
+ * ========================================================================= */
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+/* =========================================================================
+ * 1. 在线模型地址（开源 GLB，已逐一实测：HTTP 200 + CORS * + 合法 glTF2.0）
+ *    加载器会按顺序自动回退，全部失败才弹出失败提示与重试按钮。
+ *    说明：Sketchfab 官方下载接口强制账号 Token，无法匿名直链；
+ *    故选用同为 CC BY 4.0 开源协议、支持匿名直链的 polyfork.dev 模型库。
+ * ========================================================================= */
+const MODEL_SOURCES = [
+  { name: 'Touring Motorcycle（主源 polyfork）',
+    url: 'https://polyfork.dev/cdn/touring-motorcycle-3b1ad3.glb' },
+  { name: 'Touring Motorcycle（www 子域备源）',
+    url: 'https://www.polyfork.dev/cdn/touring-motorcycle-3b1ad3.glb' },
+  { name: 'Motorcycle And Sidecar（第三备源）',
+    url: 'https://polyfork.dev/cdn/motorcycle-and-sidecar-7d39b8.glb' },
+];
+
+/* =========================================================================
+ * 2. 全局状态
+ * ========================================================================= */
+const state = {
+  running: false,      // 发动机是否运转
+  rpm: 0,              // 当前转速（转/分钟）
+  idleRpm: 1300,       // 怠速
+  redline: 13800,      // 红线转速（仿赛直四风格）
+  throttle: 0,         // 油门 0~1（滑块值）
+  xray: false,         // 剖切透视开关
+  autoRotate: true,    // 展台自动旋转
+  sourceIndex: 0,      // 当前模型源序号（回退用）
+  startAt: null,       // 本次启动的时间戳（启动马达过渡动画用）
+};
+
+/* =========================================================================
+ * 3. 场景 / 相机 / 渲染器
+ * ========================================================================= */
+const app = document.getElementById('app');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x07090f);
+scene.fog = new THREE.Fog(0x07090f, 10, 26);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(3.6, 2.1, 4.4);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+// 深度缓冲精度优化：近平面 0.1、远平面 100 比例达 1000 倍，会导致中距离物体
+// 深度值互相吞噬（模型被地面/展台错误遮挡）。收紧到 0.1~30 后比例仅 300 倍。
+camera.near = 0.1;
+camera.far = 30;
+camera.updateProjectionMatrix();
+// 剖切平面：全局裁剪平面，仅挂载到“外壳”材质上。
+// 法线朝 -X，constant 为正表示从 +X 侧切除；初始常数对应车身半宽附近
+const clipPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1.2);
+renderer.localClippingEnabled = true;
+app.appendChild(renderer.domElement);
+
+// 轨道控制器：鼠标环绕 + 滚轮缩放
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.target.set(0, 0.85, 0);
+controls.minDistance = 1.6;
+controls.maxDistance = 10;
+controls.maxPolarAngle = Math.PI * 0.52;   // 不让相机钻到地面以下
+controls.autoRotateSpeed = 1.4;
+
+/* =========================================================================
+ * 4. 灯光与环境（RoomEnvironment 提供金属反射，无需外部 HDR 文件）
+ * ========================================================================= */
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+keyLight.position.set(4, 7, 3);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.near = 1;
+keyLight.shadow.camera.far = 20;
+keyLight.shadow.camera.left = -4;
+keyLight.shadow.camera.right = 4;
+keyLight.shadow.camera.top = 4;
+keyLight.shadow.camera.bottom = -4;
+scene.add(keyLight);
+
+const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.4);   // 蓝色轮廓光
+rimLight.position.set(-5, 3, -4);
+scene.add(rimLight);
+
+// 正面补光：该模型为顶点色且整体偏暗，需要额外主光提亮
+const fillLight = new THREE.DirectionalLight(0xfff2e0, 1.6);
+fillLight.position.set(0, 3, 6);
+scene.add(fillLight);
+scene.add(new THREE.AmbientLight(0x223355, 0.6));
+
+/* =========================================================================
+ * 5. 数字展台与地面
+ * ========================================================================= */
+// 地面
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(40, 40),
+  new THREE.MeshStandardMaterial({ color: 0x0b0f18, roughness: 0.85, metalness: 0.2 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// 网格线
+const grid = new THREE.GridHelper(30, 60, 0x1e3a5f, 0x122033);
+grid.material.transparent = true;
+grid.material.opacity = 0.5;
+scene.add(grid);
+
+// 圆形展台
+const stage = new THREE.Mesh(
+  new THREE.CylinderGeometry(2.1, 2.25, 0.14, 96),
+  new THREE.MeshStandardMaterial({ color: 0x141b2b, roughness: 0.35, metalness: 0.75 })
+);
+stage.position.y = 0.07;
+stage.receiveShadow = true;
+stage.castShadow = true;
+scene.add(stage);
+
+// 展台发光环
+const ringGlow = new THREE.Mesh(
+  new THREE.TorusGeometry(2.12, 0.022, 12, 128),
+  new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
+);
+ringGlow.rotation.x = Math.PI / 2;
+ringGlow.position.y = 0.15;
+scene.add(ringGlow);
+
+/* =========================================================================
+ * 6. 程序化“直列四缸发动机”——剖切透视时展示内部运转结构
+ *    活塞往复 + 曲轴旋转 + 气门摇臂，转速与发动机声音完全联动。
+ * ========================================================================= */
+const engineGroup = new THREE.Group();
+engineGroup.visible = false;     // 默认隐藏，剖切时显示
+const pistons = [];
+let crankshaft = null;
+let valveRocker = null;
+
+function buildProceduralEngine() {
+  const metal = new THREE.MeshStandardMaterial({ color: 0xb8c2cc, metalness: 0.95, roughness: 0.25 });
+  const darkMetal = new THREE.MeshStandardMaterial({ color: 0x3a4250, metalness: 0.9, roughness: 0.4 });
+  const glowMat = new THREE.MeshStandardMaterial({
+    color: 0xf43f5e, emissive: 0xf43f5e, emissiveIntensity: 0.55, metalness: 0.4, roughness: 0.3
+  });
+
+  // 曲轴箱（半透明外壳，暗示机体轮廓）
+  const block = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.5, 0.72),
+    new THREE.MeshStandardMaterial({ color: 0x2a3342, metalness: 0.8, roughness: 0.35,
+      transparent: true, opacity: 0.28 }));
+  block.position.y = 0.05;
+  engineGroup.add(block);
+
+  // 曲轴
+  crankshaft = new THREE.Group();
+  const crankShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.78, 20), darkMetal);
+  crankShaft.rotation.x = Math.PI / 2;
+  crankshaft.add(crankShaft);
+  // 四个曲柄销（相位错开，模拟直四点火顺序）
+  for (let i = 0; i < 4; i++) {
+    const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.1, 12), glowMat);
+    pin.rotation.z = Math.PI / 2;
+    pin.position.set(0.11, 0, -0.27 + i * 0.18);
+    pin.userData.phase = i * Math.PI / 2;
+    crankshaft.add(pin);
+  }
+  crankshaft.position.y = -0.12;
+  engineGroup.add(crankshaft);
+
+  // 四个气缸 + 活塞 + 连杆
+  for (let i = 0; i < 4; i++) {
+    const z = -0.27 + i * 0.18;
+
+    // 气缸壁（线框感，便于看穿）
+    const cylWall = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.42, 20, 1, true),
+      new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.9, roughness: 0.3,
+        transparent: true, opacity: 0.22, side: THREE.DoubleSide }));
+    cylWall.position.set(0, 0.24, z);
+    engineGroup.add(cylWall);
+
+    // 活塞
+    const piston = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.1, 20), metal);
+    piston.position.set(0, 0.18, z);
+    piston.userData.baseY = 0.18;
+    piston.userData.phase = i * Math.PI / 2;
+    engineGroup.add(piston);
+    pistons.push(piston);
+
+    // 连杆
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.24, 10), darkMetal);
+    rod.position.set(0, 0.02, z);
+    piston.userData.rod = rod;
+    engineGroup.add(rod);
+
+    // 顶部火花塞（发光小点）
+    const plug = new THREE.Mesh(new THREE.SphereGeometry(0.022, 12, 12), glowMat);
+    plug.position.set(0, 0.47, z);
+    engineGroup.add(plug);
+  }
+
+  // 气门摇臂轴（随转速摆动）
+  valveRocker = new THREE.Group();
+  const rockerBar = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.72, 12), darkMetal);
+  rockerBar.rotation.x = Math.PI / 2;
+  valveRocker.add(rockerBar);
+  valveRocker.position.y = 0.42;
+  engineGroup.add(valveRocker);
+
+  engineGroup.traverse(o => { if (o.isMesh) { o.castShadow = true; } });
+}
+buildProceduralEngine();
+scene.add(engineGroup);
+
+/* =========================================================================
+ * 7. GLB 模型加载（进度回调 + 多源回退 + 失败提示）
+ * ========================================================================= */
+const loader = new GLTFLoader();
+const bikeRoot = new THREE.Group();   // 整车外壳（剖切作用对象）
+scene.add(bikeRoot);
+
+const wheelNodes = [];                // 车轮节点（用于转动动画）
+const shellMaterials = [];            // 外壳材质（剖切时变透明）
+const solidMaterials = [];            // 机械件材质（保持不透明）
+
+// 节点名关键词分类：命中“外壳类”视为整流罩/车身覆盖件
+const SHELL_KEYS = ['body', 'front-end', 'saddle', 'bag', 'stowage', 'fairing', 'tank', 'fender'];
+const SOLID_KEYS = ['wheel', 'tyre', 'tire', 'engine', 'frame', 'fork', 'exhaust', 'brake', 'chain'];
+
+const loaderEl = document.getElementById('loader');
+const progressBar = document.getElementById('progressBar');
+const loadPct = document.getElementById('loadPct');
+const loadLabel = document.getElementById('loadLabel');
+const retryBtn = document.getElementById('retryBtn');
+
+function classifyMaterial(nodeName, mesh) {
+  const name = (nodeName || '').toLowerCase();
+  const isShell = SHELL_KEYS.some(k => name.includes(k)) && !SOLID_KEYS.some(k => name.includes(k));
+
+  // 该模型顶点色整体极暗（主车身平均亮度仅约 0.09），在深色展厅几乎不可见。
+  // 只修改几何的顶点色 attribute（Float32 缓冲可保存 HDR 线性值），不重建材质——
+  // 保留 GLTFLoader 已正确编译的原材质，规避材质替换导致的渲染失效。
+  const colorAttr = mesh.geometry.attributes.color;
+  if (colorAttr) {
+    // 提亮倍数：原亮度 0.09~0.4，放大 3.2 倍后经 ACES 色调映射，
+    // 既能保证深色展厅下清晰可见，又保留车漆的明暗与色相层次（过大会发白）
+    const BOOST = 3.2;
+    for (let i = 0; i < colorAttr.count; i++) {
+      colorAttr.setXYZ(i,
+        colorAttr.getX(i) * BOOST,
+        colorAttr.getY(i) * BOOST,
+        colorAttr.getZ(i) * BOOST);
+    }
+    colorAttr.needsUpdate = true;
+  }
+
+  // 记录 GLTF 原材质引用（不替换、不克隆），供剖切透视直接修改其透明度/裁剪平面
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  mats.forEach(m => {
+    if (!m.userData.originals) {
+      m.userData.originals = {
+        opacity: m.opacity,
+        transparent: m.transparent,
+        depthWrite: m.depthWrite,
+      };
+    }
+    m.envMapIntensity = 1.3;
+    if (isShell) shellMaterials.push(m); else solidMaterials.push(m);
+  });
+}
+
+function normalizeModel(gltf) {
+  const model = gltf.scene;
+
+  // 阴影 + 材质分类（仅提亮顶点色、记录原材质，不替换材质）+ 收集车轮节点
+  model.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+      classifyMaterial(o.name, o);
+    }
+    const n = (o.name || '').toLowerCase();
+    if (n.startsWith('wheel')) wheelNodes.push(o);
+  });
+
+  // 归一化尺寸：统一缩放到长度约 3 个单位，并落到展台表面
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const maxLen = Math.max(size.x, size.z);
+  const scale = 3.0 / maxLen;
+  model.scale.setScalar(scale);
+
+  // 让车身长边对齐 X 轴（剖切平面沿车身纵向切除）。先旋转再取包围盒，保证后续居中正确
+  if (size.z > size.x) model.rotation.y = Math.PI / 2;
+
+  const box2 = new THREE.Box3().setFromObject(model);
+  const center = box2.getCenter(new THREE.Vector3());
+  model.position.sub(center);                       // 模型中心对齐原点
+  const box3 = new THREE.Box3().setFromObject(model);
+  model.position.y -= box3.min.y - 0.16;           // 轮胎落在展台上方 (y≈0.14)
+
+  bikeRoot.add(model);
+
+  // 程序化发动机定位到车身中部偏下（车轮之间），尺寸按车身宽度自适应
+  const bikeBox = new THREE.Box3().setFromObject(model);
+  const bikeSize = bikeBox.getSize(new THREE.Vector3());
+  const engineScale = Math.max(0.55, Math.min(0.9, bikeSize.z * 0.95));
+  engineGroup.scale.setScalar(engineScale);
+  engineGroup.position.set(0, 0.62, 0);
+
+  // 相机目标对准车身中心
+  controls.target.set(0, 0.9, 0);
+}
+
+function loadModel(idx) {
+  if (idx >= MODEL_SOURCES.length) {
+    // 所有源均失败
+    loadLabel.textContent = '❌ 模型加载失败（网络受限或 CDN 不可达）';
+    document.querySelector('.ring').style.display = 'none';
+    progressBar.parentElement.style.display = 'none';
+    loadPct.style.display = 'none';
+    retryBtn.style.display = 'inline-block';
+    return;
+  }
+  state.sourceIndex = idx;
+  const src = MODEL_SOURCES[idx];
+  loadLabel.textContent = `正在加载：${src.name}（第 ${idx + 1}/${MODEL_SOURCES.length} 源）`;
+  retryBtn.style.display = 'none';
+
+  loader.load(
+    src.url,
+    gltf => {                  // 成功
+      normalizeModel(gltf);
+      loaderEl.classList.add('hide');
+      applyXray(state.xray);   // 同步初始剖切状态
+    },
+    xhr => {                   // 进度
+      if (xhr.lengthComputable) {
+        const pct = Math.round((xhr.loaded / xhr.total) * 100);
+        progressBar.style.width = pct + '%';
+        loadPct.textContent = pct + '%';
+      } else {
+        progressBar.style.width = '60%';
+        loadPct.textContent = '下载中…';
+      }
+    },
+    err => {                   // 当前源失败 → 自动回退下一源
+      console.warn('模型源加载失败，尝试下一源：', src.url, err);
+      loadLabel.textContent = `源 ${idx + 1} 失败，正在切换备用源…`;
+      loadModel(idx + 1);
+    }
+  );
+}
+retryBtn.addEventListener('click', () => {
+  document.querySelector('.ring').style.display = 'block';
+  progressBar.parentElement.style.display = 'block';
+  loadPct.style.display = 'block';
+  progressBar.style.width = '0%';
+  loadModel(0);
+});
+loadModel(0);
+
+/* =========================================================================
+ * 8. 剖切透视：外壳半透明 + 纵向裁剪平面 + 显示内部发动机
+ * ========================================================================= */
+function applyXray(on) {
+  state.xray = on;
+  document.getElementById('clipWrap').classList.toggle('show', on);
+  engineGroup.visible = on;
+
+  shellMaterials.forEach(m => {
+    if (on) {
+      m.transparent = true;
+      m.opacity = 0.16;
+      m.depthWrite = false;
+      m.clippingPlanes = [clipPlane];          // 仅外壳被剖切
+      m.clipShadows = true;
+    } else {
+      m.transparent = m.userData.originals.transparent;
+      m.opacity = m.userData.originals.opacity;
+      m.depthWrite = m.userData.originals.depthWrite;
+      m.clippingPlanes = [];
+    }
+    m.needsUpdate = true;
+  });
+  // 机械件在透视模式下略微提亮，突出内部结构
+  solidMaterials.forEach(m => {
+    if (on) { m.emissive = new THREE.Color(0x113355); m.emissiveIntensity = 0.6; }
+    else { m.emissiveIntensity = 0; }
+  });
+}
+
+document.getElementById('xrayToggle').addEventListener('change', e => applyXray(e.target.checked));
+document.getElementById('clipSlider').addEventListener('input', e => {
+  // 0~100 映射到裁剪常数 1.6~0.2：滑块越大，constant 越小，切除越多
+  clipPlane.constant = 1.6 - (e.target.value / 100) * 1.4;
+});
+document.getElementById('rotateToggle').addEventListener('change', e => {
+  state.autoRotate = e.target.checked;
+});
+
+/* =========================================================================
+ * 9. WebAudio 发动机声音合成（纯代码，无音频文件）
+ *    架构：点火脉冲(锯齿波) + 基频振荡(方波) + 噪声排气 → 低通 → 增益
+ *    频率随实时 RPM 变化，模拟四缸仿赛声浪。
+ * ========================================================================= */
+let audioCtx = null, masterGain = null, filterNode = null;
+let oscFire = null, oscBase = null, noiseSrc = null;
+let fireGain = null, baseGain = null, noiseGain = null;
+
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0;
+
+  // 低通滤波器：转速越高截止频率越高，声浪越“炸”
+  filterNode = audioCtx.createBiquadFilter();
+  filterNode.type = 'lowpass';
+  filterNode.frequency.value = 500;
+  filterNode.Q.value = 2.5;
+
+  filterNode.connect(masterGain);
+  masterGain.connect(audioCtx.destination);
+
+  // ① 点火脉冲振荡器（锯齿波 → 四缸高频颗粒感）
+  oscFire = audioCtx.createOscillator();
+  oscFire.type = 'sawtooth';
+  fireGain = audioCtx.createGain();
+  fireGain.gain.value = 0.5;
+  oscFire.connect(fireGain).connect(filterNode);
+
+  // ② 基频振荡器（方波 → 发动机低沉本体声）
+  oscBase = audioCtx.createOscillator();
+  oscBase.type = 'square';
+  baseGain = audioCtx.createGain();
+  baseGain.gain.value = 0.22;
+  oscBase.connect(baseGain).connect(filterNode);
+
+  // ③ 白噪声 → 排气湍流声
+  const bufSize = audioCtx.sampleRate * 2;
+  const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+  noiseSrc = audioCtx.createBufferSource();
+  noiseSrc.buffer = buf;
+  noiseSrc.loop = true;
+  noiseGain = audioCtx.createGain();
+  noiseGain.gain.value = 0.12;
+  noiseSrc.connect(noiseGain).connect(filterNode);
+
+  oscFire.start(); oscBase.start(); noiseSrc.start();
+}
+
+// 根据当前 RPM 更新声音参数（线性渐变避免爆音）；总增益在主循环中按实际油门设置
+function updateAudio() {
+  if (!audioCtx || !state.running) return;
+  const t = audioCtx.currentTime;
+  const rpmRatio = state.rpm / state.redline;
+  // 四冲程直四：每转点火 2 次，点火频率 = RPM*2/60
+  const fireFreq = (state.rpm * 2) / 60;
+  oscFire.frequency.setTargetAtTime(fireFreq, t, 0.05);
+  oscBase.frequency.setTargetAtTime(fireFreq / 2, t, 0.05);
+  filterNode.frequency.setTargetAtTime(400 + rpmRatio * 4200, t, 0.08);
+}
+
+/* =========================================================================
+ * 10. 启动 / 熄火逻辑（带启动马达过渡）
+ * ========================================================================= */
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+
+function startEngine() {
+  if (state.running) return;
+  initAudio();
+  audioCtx.resume();
+  state.running = true;
+  state.rpm = 0;                       // 启动马达先从低转拉起
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+}
+
+function stopEngine() {
+  if (!state.running) return;
+  state.running = false;
+  state.throttle = 0;
+  document.getElementById('throttleSlider').value = 0;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  if (audioCtx) masterGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.15);
+}
+
+startBtn.addEventListener('click', startEngine);
+stopBtn.addEventListener('click', stopEngine);
+
+// 油门
+const throttleSlider = document.getElementById('throttleSlider');
+throttleSlider.addEventListener('input', e => {
+  state.throttle = e.target.value / 100;
+});
+
+// 键盘快捷键：W 油门 / Space 启停 / X 剖切
+const keys = {};
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); state.running ? stopEngine() : startEngine(); }
+  if (e.code === 'KeyX') {
+    const t = document.getElementById('xrayToggle');
+    t.checked = !t.checked; applyXray(t.checked);
+  }
+  keys[e.code] = true;
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+/* =========================================================================
+ * 11. 转速表（Canvas 手绘弧形式仪表）
+ * ========================================================================= */
+const tachCanvas = document.getElementById('tach');
+const tctx = tachCanvas.getContext('2d');
+const rpmText = document.getElementById('rpmText');
+
+function drawTach() {
+  const w = tachCanvas.width, h = tachCanvas.height;
+  tctx.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h - 10, radius = 190;
+  const startA = Math.PI, endA = 2 * Math.PI;
+  const ratio = Math.min(state.rpm / state.redline, 1);
+
+  // 背景刻度弧
+  tctx.lineWidth = 16;
+  tctx.lineCap = 'round';
+  tctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  tctx.beginPath(); tctx.arc(cx, cy, radius, startA, endA); tctx.stroke();
+
+  // 转速弧（蓝→红渐变）
+  if (state.rpm > 0) {
+    const grad = tctx.createLinearGradient(0, 0, w, 0);
+    grad.addColorStop(0, '#38bdf8');
+    grad.addColorStop(0.75, '#f59e0b');
+    grad.addColorStop(1, '#f43f5e');
+    tctx.strokeStyle = grad;
+    tctx.beginPath();
+    tctx.arc(cx, cy, radius, startA, startA + (endA - startA) * ratio);
+    tctx.stroke();
+  }
+
+  // 刻度数字（每 2000 转）
+  tctx.fillStyle = '#93a4bd';
+  tctx.font = '20px Segoe UI';
+  tctx.textAlign = 'center';
+  for (let r = 0; r <= state.redline; r += 2000) {
+    const a = startA + (endA - startA) * (r / state.redline);
+    const x = cx + Math.cos(a) * (radius - 34);
+    const y = cy + Math.sin(a) * (radius - 34);
+    tctx.fillText(String(r / 1000), x, y + 7);
+  }
+
+  // 中心数值
+  tctx.fillStyle = state.running ? '#e6edf7' : '#475569';
+  tctx.font = 'bold 40px Segoe UI';
+  tctx.fillText(Math.round(state.rpm).toLocaleString(), cx, cy - 66);
+  tctx.font = '16px Segoe UI';
+  tctx.fillStyle = '#93a4bd';
+  tctx.fillText('RPM ×1000', cx, cy - 40);
+
+  rpmText.textContent = state.running
+    ? (state.throttle > 0.05 ? `运转中 · 油门 ${Math.round(state.throttle * 100)}%` : '怠速运转 IDLE')
+    : '熄火 OFF · 0 RPM';
+}
+
+/* =========================================================================
+ * 12. 主循环：RPM 物理模拟 + 机械动画 + 渲染
+ * ========================================================================= */
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  /* --- 12.0 实际油门：滑块与键盘 W 取最大值（松开 W 后恢复滑块值，避免残留） --- */
+  const keyThrottle = keys['KeyW'] ? 1 : 0;
+  const effThrottle = Math.max(state.throttle, keyThrottle);
+  if (keyThrottle) throttleSlider.value = 100;
+  else if (state.throttle === 0) throttleSlider.value = 0;
+
+  /* --- 12.1 RPM 模拟：一阶惯性逼近目标转速 --- */
+  if (state.running) {
+    // 启动阶段：点火后前 1.2 秒模拟启动马达拖拽（用独立时间戳，避免页面久置后失效）
+    if (state.startAt === null) state.startAt = clock.elapsedTime;
+    const startProgress = THREE.MathUtils.clamp((clock.elapsedTime - state.startAt) / 1.2, 0, 1);
+    const target = state.idleRpm + effThrottle * (state.redline - state.idleRpm);
+    const realTarget = target * (0.35 + 0.65 * startProgress);
+    // 油门响应快、松油回落稍慢，模拟发动机惯性
+    const k = effThrottle > 0 ? 2.8 : 1.4;
+    state.rpm += (realTarget - state.rpm) * Math.min(k * dt, 1);
+  } else {
+    state.startAt = null;
+    state.rpm += (0 - state.rpm) * Math.min(3.5 * dt, 1);   // 熄火后转速衰减
+  }
+  /* --- 12.2 发动机内部机械动画（曲轴角速度由 RPM 换算） --- */
+  if (engineGroup.visible && state.rpm > 0) {
+    const angVel = (state.rpm / 60) * Math.PI * 2 * dt;
+    crankshaft.rotation.z -= angVel;
+    pistons.forEach(p => {
+      const phase = p.userData.phase + crankshaft.rotation.z;
+      p.position.y = p.userData.baseY + Math.sin(phase) * 0.09;
+      // 连杆跟随活塞倾斜
+      const rod = p.userData.rod;
+      rod.position.y = p.position.y - 0.13;
+      rod.rotation.x = Math.sin(phase) * 0.25;
+    });
+    valveRocker.rotation.z = Math.sin(crankshaft.rotation.z * 2) * 0.15;
+  }
+
+  /* --- 12.3 车轮转动（运转时随转速旋转） --- */
+  if (state.running) {
+    const wheelSpin = (state.rpm / state.redline) * 9 * dt;
+    wheelNodes.forEach(w => { w.rotation.z -= wheelSpin; });
+    // 车身轻微振动（怠速抖动 + 高转麻脚感）
+    bikeRoot.position.y = Math.sin(clock.elapsedTime * state.rpm / 90) * 0.0018 * (0.4 + effThrottle);
+  }
+
+  /* --- 12.4 声音与展台 --- */
+  // 声音增益同时响应滑块油门与 W 键
+  if (audioCtx && state.running) {
+    const t0 = audioCtx.currentTime;
+    masterGain.gain.setTargetAtTime(0.14 + effThrottle * 0.12, t0, 0.1);
+  }
+  updateAudio();
+  controls.autoRotate = state.autoRotate;
+  ringGlow.material.color.setHSL(0.55 + Math.sin(clock.elapsedTime) * 0.02, 0.9, 0.55);
+
+  drawTach();
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// 调试钩子：把核心对象挂到 window，便于控制台/自动化诊断（不影响正常功能）
+window.__debug = { THREE, scene, camera, renderer, bikeRoot, engineGroup, state,
+  shellMaterials, solidMaterials, wheelNodes, clipPlane };
+
+/* =========================================================================
+ * 13. 窗口自适应
+ * ========================================================================= */
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* =========================================================================
+ * 14. 控制面板拖动（纯指针事件实现）
+ * ========================================================================= */
+const panel = document.getElementById('panel');
+const handle = document.getElementById('dragHandle');
+let drag = null;
+handle.addEventListener('pointerdown', e => {
+  drag = { x: e.clientX, y: e.clientY,
+    left: panel.offsetLeft, top: panel.offsetTop };
+  panel.style.right = 'auto';
+  handle.setPointerCapture(e.pointerId);
+});
+handle.addEventListener('pointermove', e => {
+  if (!drag) return;
+  let nx = drag.left + (e.clientX - drag.x);
+  let ny = drag.top + (e.clientY - drag.y);
+  // 限制在视口内
+  nx = THREE.MathUtils.clamp(nx, 8, innerWidth - panel.offsetWidth - 8);
+  ny = THREE.MathUtils.clamp(ny, 8, innerHeight - 80);
+  panel.style.left = nx + 'px';
+  panel.style.top = ny + 'px';
+});
+handle.addEventListener('pointerup', () => { drag = null; });
+</script>
+</body>
+</html>
