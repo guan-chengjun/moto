@@ -1,0 +1,105 @@
+# ---- 操作系统 ----
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---- 编辑器 / IDE ----
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.vs/
+
+# ---- 日志与临时文件 ----
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+
+# ---- 构建产物 ----
+dist/
+build/
+bin/
+obj/
+out/
+*.o
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.lib
+*.a
+*.so
+*.dylib
+*.class
+*.jar
+*.war
+
+# ---- Node / 前端 ----
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+.yarn/
+coverage/
+.cache/
+.next/
+.nuxt/
+.vite/
+*.tsbuildinfo
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ---- Java / Gradle / Maven ----
+.gradle/
+target/
+.classpath
+.project
+.settings/
+
+# ---- Unity / Unreal / Godot ----
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+Build/
+Builds/
+Saved/
+Intermediate/
+DerivedDataCache/
+*.csproj.ide
+*.uprojectdirs
+*.godot/
+.godot/
+
+# ---- 密钥与本地配置 ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+local.settings.json
